@@ -108,6 +108,7 @@ license check satisfied.
 | `scripts/bitlocker/Get-BitLockerEscrowDiagnostics.ps1` | Device (PDQ Connect) | On-device evidence collection (escrow events 845/846, timelines) |
 | `scripts/intune-remediation/Detect-BitLockerEscrow.ps1` | Intune Remediation | Detects protectors never escrowed to Entra |
 | `scripts/intune-remediation/Remediate-BitLockerEscrow.ps1` | Intune Remediation | Re-escrows and verifies via event 845 |
+| `scripts/oobe-usb/` (see `RUNBOOK.md`) | New-PC provisioning USB | Blocks OOBE auto-encryption + domain-joins pe.gipartners.com so escrow-first encryption happens in order |
 
 ## Troubleshooting
 
