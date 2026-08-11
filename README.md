@@ -67,6 +67,48 @@ Failures: 0
 | 0 | All keys backed up successfully (or no BitLocker volumes found) |
 | 1 | One or more failures — check the log output for details |
 
+## Intune Remediation (systemic fix — recommended)
+
+Windows 11 24H2+ **automatic device encryption** encrypts new machines during
+OOBE, *before* hybrid join and Intune enrollment complete. The Intune BitLocker
+policy escrows keys only at encryption time, so pre-encrypted machines are
+silently skipped and BitLocker never retries a missed/failed escrow. Every new
+laptop loses this race (confirmed on GIBSMAR-X1: hybrid joined 16:31 UTC,
+Intune enrolled 17:59 UTC, already encrypted, zero keys escrowed).
+
+The fix is `scripts/intune-remediation/` — a Remediation pair that makes escrow
+a converging state instead of a one-shot event:
+
+- `Detect-BitLockerEscrow.ps1` — non-compliant when any RecoveryPassword
+  protector lacks a successful Entra backup event (Event 845)
+- `Remediate-BitLockerEscrow.ps1` — runs `BackupToAAD-BitLockerKeyProtector`
+  for every protector and verifies the 845 event landed
+
+Setup: Intune > **Devices > Scripts and remediations > Remediations > Create**
+
+| Setting | Value |
+|---|---|
+| Detection script | `Detect-BitLockerEscrow.ps1` |
+| Remediation script | `Remediate-BitLockerEscrow.ps1` |
+| Run using logged-on credentials | **No** (SYSTEM) |
+| Run in 64-bit PowerShell | **Yes** |
+| Schedule | Daily |
+| Assignment | All Windows workstations |
+
+Requires Windows Enterprise/Education (E3+) or Pro with the Remediations
+license check satisfied.
+
+## Scripts
+
+| Script | Where it runs | Purpose |
+|---|---|---|
+| `Backup-BitLockerToEntra.ps1` | Device (PDQ Connect, backup method) | One-shot escrow of all recovery keys |
+| `scripts/bitlocker/Get-DevicesMissingBitLockerKeys.ps1` | Admin workstation | Tenant-wide audit: devices vs escrowed keys (XLSX report) |
+| `scripts/bitlocker/Get-DeviceEscrowStatus.ps1` | Admin workstation | Server-side escrow-chain trace for one device (no device access) |
+| `scripts/bitlocker/Get-BitLockerEscrowDiagnostics.ps1` | Device (PDQ Connect) | On-device evidence collection (escrow events 845/846, timelines) |
+| `scripts/intune-remediation/Detect-BitLockerEscrow.ps1` | Intune Remediation | Detects protectors never escrowed to Entra |
+| `scripts/intune-remediation/Remediate-BitLockerEscrow.ps1` | Intune Remediation | Re-escrows and verifies via event 845 |
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
