@@ -51,14 +51,14 @@ computers container** (`CN=Computers` unless redirected). Two must-checks:
 
 The delegation covers both computer OUs (script defaults):
 
-- `OU=GI Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com`
+- `OU=Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com`
 - `OU=Computers,OU=GI Property Management,DC=pe,DC=gipartners,DC=com`
 
 `redircmp` can only target **one** container, so pick the majority OU as the
 default landing zone:
 
 ```bash
-redircmp "OU=GI Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com"
+redircmp "OU=Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com"
 ```
 
 GI Property Management machines then get moved to their Computers OU right

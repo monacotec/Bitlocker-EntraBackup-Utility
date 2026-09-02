@@ -31,7 +31,7 @@
 .PARAMETER OU
     One or more OU distinguished names where joined computers land (see RUNBOOK
     A2 / redircmp). Delegation is applied to each. Defaults:
-      OU=GI Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com
+      OU=Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com
       OU=Computers,OU=GI Property Management,DC=pe,DC=gipartners,DC=com
 
 .PARAMETER AccountOU
@@ -60,7 +60,7 @@ param(
     [Parameter()] [string]$AccountName = 'hybridjoin',
     [Parameter()] [string]$UpnSuffix = 'gipartners.com',
     [Parameter()] [string[]]$OU = @(
-        'OU=GI Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com',
+        'OU=Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com',
         'OU=Computers,OU=GI Property Management,DC=pe,DC=gipartners,DC=com'
     ),
     [Parameter()] [string]$AccountOU = 'OU=Service Accounts,OU=GI Partners,DC=pe,DC=gipartners,DC=com',
@@ -207,7 +207,8 @@ Write-Log "`n=== Step 3: delegation on OUs ===" -Color Cyan
 if ($user -and $ouObjs.Count -gt 0) {
     # Well-known schema/rights GUIDs
     $computerClass = [guid]'bf967a86-0de6-11d0-a285-00aa003049e2'
-    $resetPassword = [guid]'00299570-246d-11d0-a768-00aa006e0529'
+    # NOTE: name must not collide with the -ResetPassword [switch] parameter
+    $resetPasswordRight = [guid]'00299570-246d-11d0-a768-00aa006e0529'
     $attrGuids = @{
         'pwdLastSet'           = [guid]'bf967a0a-0de6-11d0-a285-00aa003049e2'
         'dNSHostName'          = [guid]'72e39547-7b18-11d1-adef-00c04fd8d5cd'
@@ -225,7 +226,7 @@ if ($user -and $ouObjs.Count -gt 0) {
                        $sid, 'CreateChild', 'Allow', $computerClass, 'All') })
     $wanted.Add(@{ Name = 'Reset password (descendant computers)'
                    Rule = [System.DirectoryServices.ActiveDirectoryAccessRule]::new(
-                       $sid, 'ExtendedRight', 'Allow', $resetPassword, 'Descendents', $computerClass) })
+                       $sid, 'ExtendedRight', 'Allow', $resetPasswordRight, 'Descendents', $computerClass) })
     foreach ($attr in $attrGuids.Keys) {
         $wanted.Add(@{ Name = "Write $attr (descendant computers)"
                        Rule = [System.DirectoryServices.ActiveDirectoryAccessRule]::new(
