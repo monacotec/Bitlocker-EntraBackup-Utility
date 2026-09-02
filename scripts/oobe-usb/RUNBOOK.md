@@ -36,9 +36,31 @@ anything:
 Annual rotation: `.\New-HybridJoinAccount.ps1 -ResetPassword`, then rebuild the
 PPKG (Part B).
 
-Harden it: add `PE\hybridjoin` to a "Denied interactive logon" GPO (Deny log on
-locally / through Remote Desktop). The account exists solely to create computer
-objects — the script prints this reminder at the end.
+**Harden it — deny all logon types except network.** User Rights Assignment is
+NOT cumulative across GPOs (the winning GPO replaces the list), so first check
+whether an existing GPO already defines the deny rights and add the account
+there if so:
+
+```powershell
+Get-GPO -All | ForEach-Object { if ((Get-GPOReport -Guid $_.Id -ReportType Xml) -match 'SeDenyInteractiveLogonRight|SeDenyRemoteInteractiveLogonRight') { $_.DisplayName } }
+```
+
+Otherwise, in GPMC create `GI - Service Account Logon Restrictions` linked at
+the domain root, then under Computer Configuration > Policies > Windows
+Settings > Security Settings > Local Policies > **User Rights Assignment** add
+`PE\hybridjoin` to all four:
+
+- Deny log on locally
+- Deny log on through Remote Desktop Services
+- Deny log on as a batch job
+- Deny log on as a service
+
+Never add it to **"Deny access to this computer from the network"** — the
+PPKG domain join authenticates to the DCs as a network logon and would break.
+
+Verify: `gpresult /scope computer /h C:\GI\gpresult.html` on any refreshed
+workstation shows the account in all four deny rights, winning GPO as expected;
+a console sign-in attempt as `PE\hybridjoin` is refused.
 
 ### A2. Redirect where joined computers land (critical)
 
