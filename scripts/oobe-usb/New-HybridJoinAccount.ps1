@@ -29,9 +29,10 @@
     UPN suffix. Default: gipartners.com  (=> hybridjoin@gipartners.com)
 
 .PARAMETER OU
-    Distinguished name of the OU where joined computers land (see RUNBOOK A2 /
-    redircmp). Delegation is applied here. Default: the Workstations OU in
-    pe.gipartners.com.
+    One or more OU distinguished names where joined computers land (see RUNBOOK
+    A2 / redircmp). Delegation is applied to each. Defaults:
+      OU=GI Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com
+      OU=Computers,OU=GI Property Management,DC=pe,DC=gipartners,DC=com
 
 .PARAMETER AccountOU
     OU where the service account itself is created (and moved to, if it exists
@@ -58,7 +59,10 @@
 param(
     [Parameter()] [string]$AccountName = 'hybridjoin',
     [Parameter()] [string]$UpnSuffix = 'gipartners.com',
-    [Parameter()] [string]$OU = 'OU=Workstations,OU=GI Partners,DC=pe,DC=gipartners,DC=com',
+    [Parameter()] [string[]]$OU = @(
+        'OU=GI Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com',
+        'OU=Computers,OU=GI Property Management,DC=pe,DC=gipartners,DC=com'
+    ),
     [Parameter()] [string]$AccountOU = 'OU=Service Accounts,OU=GI Partners,DC=pe,DC=gipartners,DC=com',
     [Parameter()] [securestring]$AccountPassword,
     [Parameter()] [switch]$ResetPassword,
@@ -116,7 +120,7 @@ if (-not $user) {
         New-ADUser -Name $AccountName -SamAccountName $AccountName -UserPrincipalName $upn `
             -AccountPassword $AccountPassword -Enabled $true `
             -PasswordNeverExpires $true -CannotChangePassword $true `
-            -Description "OOBE PPKG domain-join only. Delegated on $OU. No interactive logon. See Bitlocker-EntraBackup-Utility RUNBOOK." `
+            -Description "OOBE PPKG domain-join only. Delegated on computer OUs (see Bitlocker-EntraBackup-Utility RUNBOOK). No interactive logon." `
             -Path $AccountOU
         Write-Log "[OK] Created $upn in $AccountOU" -Color Green
         Write-Log "MUTATION: New-ADUser $AccountName in $AccountOU by $env:USERDOMAIN\$env:USERNAME"
@@ -174,33 +178,33 @@ else {
     }
 }
 
-# --- Step 2: target OU ---
-Write-Log "`n=== Step 2: target OU ===" -Color Cyan
-$ouObj = $null
-try {
-    $ouObj = Get-ADOrganizationalUnit -Identity $OU
-    Write-Log "[OK] OU exists: $($ouObj.DistinguishedName)" -Color Green
+# --- Step 2: target OUs ---
+Write-Log "`n=== Step 2: target OUs ===" -Color Cyan
+$ouObjs = [System.Collections.Generic.List[object]]::new()
+foreach ($ouDn in $OU) {
+    try {
+        $obj = Get-ADOrganizationalUnit -Identity $ouDn
+        Write-Log "[OK] OU exists: $($obj.DistinguishedName)" -Color Green
+        $ouObjs.Add($obj)
+    }
+    catch {
+        Write-Log "[!!] OU not found: $ouDn" -Color Red
+        $issues.Add("OU missing: $ouDn")
+    }
 }
-catch {
-    Write-Log "[!!] OU not found: $OU" -Color Red
-    $issues.Add("OU missing: $OU")
 
+if ($ouObjs.Count -lt $OU.Count) {
     # Help the operator find the right DN for a rerun
-    Write-Log "Candidate OUs (pass the right one via -OU '<DN>'):" -Color Yellow
+    Write-Log "Candidate OUs (pass the right ones via -OU '<DN>','<DN>'):" -Color Yellow
     $candidates = Get-ADOrganizationalUnit -Filter "Name -like '*workstation*' -or Name -like '*computer*' -or Name -like '*laptop*' -or Name -like '*desktop*'" |
         Select-Object -ExpandProperty DistinguishedName
-    if (-not $candidates) {
-        # Fall back to the OUs under GI Partners
-        $candidates = Get-ADOrganizationalUnit -SearchBase 'OU=GI Partners,DC=pe,DC=gipartners,DC=com' -SearchScope OneLevel -Filter * -ErrorAction SilentlyContinue |
-            Select-Object -ExpandProperty DistinguishedName
-    }
     foreach ($c in $candidates) { Write-Log "  $c" -Color Yellow }
 }
 
 # --- Step 3: delegation ACEs ---
-Write-Log "`n=== Step 3: delegation on OU ===" -Color Cyan
+Write-Log "`n=== Step 3: delegation on OUs ===" -Color Cyan
 
-if ($user -and $ouObj) {
+if ($user -and $ouObjs.Count -gt 0) {
     # Well-known schema/rights GUIDs
     $computerClass = [guid]'bf967a86-0de6-11d0-a285-00aa003049e2'
     $resetPassword = [guid]'00299570-246d-11d0-a768-00aa006e0529'
@@ -233,51 +237,54 @@ if ($user -and $ouObj) {
                            $sid, 'Self', 'Allow', $attrGuids[$attr], 'Descendents', $computerClass) })
     }
 
-    $adPath = "AD:\$($ouObj.DistinguishedName)"
-    $acl = Get-Acl -Path $adPath
-    $existing = $acl.Access | Where-Object { $_.IdentityReference -eq "$netbios\$AccountName" }
+    foreach ($ouObj in $ouObjs) {
+        Write-Log "--- $($ouObj.DistinguishedName) ---" -Color Cyan
+        $adPath = "AD:\$($ouObj.DistinguishedName)"
+        $acl = Get-Acl -Path $adPath
+        $existing = $acl.Access | Where-Object { $_.IdentityReference -eq "$netbios\$AccountName" }
 
-    $missing = [System.Collections.Generic.List[object]]::new()
-    foreach ($w in $wanted) {
-        $match = $existing | Where-Object {
-            $_.ActiveDirectoryRights.HasFlag($w.Rule.ActiveDirectoryRights) -and
-            $_.ObjectType -eq $w.Rule.ObjectType -and
-            $_.InheritedObjectType -eq $w.Rule.InheritedObjectType -and
-            $_.AccessControlType -eq 'Allow'
-        }
-        if ($match) {
-            Write-Log "[OK] ACE present: $($w.Name)" -Color Green
-        }
-        else {
-            $missing.Add($w)
-            if ($VerifyOnly) {
-                Write-Log "[!!] ACE MISSING: $($w.Name)" -Color Red
-                $issues.Add("ACE missing: $($w.Name)")
+        $missing = [System.Collections.Generic.List[object]]::new()
+        foreach ($w in $wanted) {
+            $match = $existing | Where-Object {
+                $_.ActiveDirectoryRights.HasFlag($w.Rule.ActiveDirectoryRights) -and
+                $_.ObjectType -eq $w.Rule.ObjectType -and
+                $_.InheritedObjectType -eq $w.Rule.InheritedObjectType -and
+                $_.AccessControlType -eq 'Allow'
+            }
+            if ($match) {
+                Write-Log "[OK] ACE present: $($w.Name)" -Color Green
+            }
+            else {
+                $missing.Add($w)
+                if ($VerifyOnly) {
+                    Write-Log "[!!] ACE MISSING: $($w.Name)" -Color Red
+                    $issues.Add("ACE missing on $($ouObj.Name): $($w.Name)")
+                }
             }
         }
-    }
 
-    if ($missing.Count -gt 0 -and -not $VerifyOnly) {
-        foreach ($m in $missing) { $acl.AddAccessRule($m.Rule) }
-        Set-Acl -Path $adPath -AclObject $acl
-        foreach ($m in $missing) {
-            Write-Log "[OK] ACE added: $($m.Name)" -Color Green
-            Write-Log "MUTATION: ACE '$($m.Name)' added to $OU by $env:USERDOMAIN\$env:USERNAME"
+        if ($missing.Count -gt 0 -and -not $VerifyOnly) {
+            foreach ($m in $missing) { $acl.AddAccessRule($m.Rule) }
+            Set-Acl -Path $adPath -AclObject $acl
+            foreach ($m in $missing) {
+                Write-Log "[OK] ACE added: $($m.Name)" -Color Green
+                Write-Log "MUTATION: ACE '$($m.Name)' added to $($ouObj.DistinguishedName) by $env:USERDOMAIN\$env:USERNAME"
+            }
         }
     }
 }
 else {
-    Write-Log "[!!] Skipping delegation - account or OU unavailable." -Color Red
-    $issues.Add("Delegation skipped (missing account or OU)")
+    Write-Log "[!!] Skipping delegation - account or OUs unavailable." -Color Red
+    $issues.Add("Delegation skipped (missing account or OUs)")
 }
 
 # --- Verdict ---
 Write-Log "`n=== Verdict ===" -Color Cyan
 if ($issues.Count -eq 0) {
-    Write-Log "ALL CHECKS GREEN - $upn is provisioned and delegated on $OU" -Color Green
+    Write-Log "ALL CHECKS GREEN - $upn is provisioned and delegated on: $($OU -join ' ; ')" -Color Green
     Write-Log "Reminders (manual, one-time):" -Color Yellow
     Write-Log "  1. Add $netbios\$AccountName to the 'Deny log on locally / via RDP' GPO." -Color Yellow
-    Write-Log "  2. Verify redircmp / Connect sync scope covers $OU (RUNBOOK A2)." -Color Yellow
+    Write-Log "  2. Verify redircmp targets ONE of these OUs and Connect sync scope covers both (RUNBOOK A2)." -Color Yellow
     Write-Log "  3. Use $netbios\$AccountName + this password when building the PPKG (RUNBOOK B5)." -Color Yellow
     Write-Log "Log: $logFile"
     exit 0

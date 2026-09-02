@@ -49,14 +49,22 @@ computers container** (`CN=Computers` unless redirected). Two must-checks:
    the Entra object is never created and hybrid join silently never completes.
 2. **The Intune auto-enrollment + SCP GPOs apply there.**
 
-Cleanest fix — redirect the default join container to the workstation OU once:
+The delegation covers both computer OUs (script defaults):
+
+- `OU=GI Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com`
+- `OU=Computers,OU=GI Property Management,DC=pe,DC=gipartners,DC=com`
+
+`redircmp` can only target **one** container, so pick the majority OU as the
+default landing zone:
 
 ```bash
-redircmp "OU=Workstations,DC=pe,DC=gipartners,DC=com"
+redircmp "OU=GI Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com"
 ```
 
-(Alternative: leave the default and have the tech move the computer object to
-the right OU immediately after join — but that reintroduces a manual step.)
+GI Property Management machines then get moved to their Computers OU right
+after join (the delegation already covers both, so the move needs no extra
+rights work). Both OUs must be in Connect sync scope and carry the
+auto-enrollment + SCP GPOs.
 
 ### A3. Install Windows Configuration Designer
 
