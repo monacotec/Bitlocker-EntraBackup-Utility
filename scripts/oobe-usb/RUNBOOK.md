@@ -120,11 +120,12 @@ Designer** (or the ADK's Imaging and Configuration Designer feature).
 6. **Add applications**: skip — the PDQ package owns app installs.
 7. **Add certificates**: skip.
 8. **Switch to advanced editor** (link at bottom-left; say Yes to the warning).
-9. Advanced editor > **Runtime settings > ProvisioningCommands > PrimaryContext > Command**:
-   - **CommandFiles**: browse to `prevent-device-encryption.cmd`
-   - **CommandLine**: `cmd /c prevent-device-encryption.cmd`
-   - **ContinueInstall**: True
-   - **RestartRequired**: False
+9. Advanced editor > **Runtime settings > ProvisioningCommands**:
+   - Current WCD builds show **DeviceContext**:
+     - **CommandFiles**: browse to `prevent-device-encryption.cmd`
+     - **CommandLine**: `cmd /c prevent-device-encryption.cmd`
+   - Older builds show **PrimaryContext > Command** instead: same two values,
+     plus **ContinueInstall**: True and **RestartRequired**: False
 10. **Export > Provisioning package**:
     - Owner: **IT Admin**
     - Version: bump on every rebuild
