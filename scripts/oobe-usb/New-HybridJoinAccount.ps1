@@ -33,6 +33,10 @@
     redircmp). Delegation is applied here. Default: the Workstations OU in
     pe.gipartners.com.
 
+.PARAMETER AccountOU
+    OU where the service account itself is created (and moved to, if it exists
+    elsewhere). Default: OU=Service Accounts,OU=GI Partners,DC=pe,DC=gipartners,DC=com
+
 .PARAMETER AccountPassword
     SecureString password for account creation / -ResetPassword. Prompted if omitted
     when needed.
@@ -55,6 +59,7 @@ param(
     [Parameter()] [string]$AccountName = 'hybridjoin',
     [Parameter()] [string]$UpnSuffix = 'gipartners.com',
     [Parameter()] [string]$OU = 'OU=Workstations,DC=pe,DC=gipartners,DC=com',
+    [Parameter()] [string]$AccountOU = 'OU=Service Accounts,OU=GI Partners,DC=pe,DC=gipartners,DC=com',
     [Parameter()] [securestring]$AccountPassword,
     [Parameter()] [switch]$ResetPassword,
     [Parameter()] [switch]$VerifyOnly
@@ -87,10 +92,24 @@ Write-Log "`n=== Step 1: service account $upn ===" -Color Cyan
 
 $user = Get-ADUser -Filter "sAMAccountName -eq '$AccountName'" -Properties PasswordNeverExpires, CannotChangePassword, Description, Enabled
 
+# The account's home OU must exist before we can create or move into it
+$accountOuObj = $null
+try {
+    $accountOuObj = Get-ADOrganizationalUnit -Identity $AccountOU
+}
+catch {
+    Write-Log "[!!] Account OU not found: $AccountOU" -Color Red
+    $issues.Add("Account OU missing: $AccountOU")
+}
+
 if (-not $user) {
     if ($VerifyOnly) {
         Write-Log "[!!] Account $AccountName does not exist." -Color Red
         $issues.Add("Account $AccountName missing")
+    }
+    elseif (-not $accountOuObj) {
+        Write-Log "[!!] Cannot create $AccountName - account OU is missing." -Color Red
+        $issues.Add("Account $AccountName not created (OU missing)")
     }
     else {
         if (-not $AccountPassword) { $AccountPassword = Read-Host -AsSecureString "Password for new account $upn" }
@@ -98,13 +117,33 @@ if (-not $user) {
             -AccountPassword $AccountPassword -Enabled $true `
             -PasswordNeverExpires $true -CannotChangePassword $true `
             -Description "OOBE PPKG domain-join only. Delegated on $OU. No interactive logon. See Bitlocker-EntraBackup-Utility RUNBOOK." `
-            -Path ("CN=Users," + $domain.DistinguishedName)
-        Write-Log "[OK] Created $upn (enabled, password never expires, cannot change password)" -Color Green
-        Write-Log "MUTATION: New-ADUser $AccountName by $env:USERDOMAIN\$env:USERNAME"
+            -Path $AccountOU
+        Write-Log "[OK] Created $upn in $AccountOU" -Color Green
+        Write-Log "MUTATION: New-ADUser $AccountName in $AccountOU by $env:USERDOMAIN\$env:USERNAME"
         $user = Get-ADUser -Identity $AccountName -Properties PasswordNeverExpires, CannotChangePassword, Description, Enabled
     }
 }
 else {
+    # Confirm/repair location of the existing account
+    $parentDn = ($user.DistinguishedName -split ',', 2)[1]
+    if ($parentDn -eq $AccountOU) {
+        Write-Log "[OK] Location = $AccountOU" -Color Green
+    }
+    elseif ($VerifyOnly) {
+        Write-Log "[!!] Account is in '$parentDn', expected '$AccountOU'" -Color Red
+        $issues.Add("$AccountName in wrong OU")
+    }
+    elseif ($accountOuObj) {
+        Move-ADObject -Identity $user.DistinguishedName -TargetPath $AccountOU
+        Write-Log "[OK] Location: moved from '$parentDn' -> '$AccountOU'" -Color Green
+        Write-Log "MUTATION: Move-ADObject $AccountName to $AccountOU by $env:USERDOMAIN\$env:USERNAME"
+        $user = Get-ADUser -Identity $AccountName -Properties PasswordNeverExpires, CannotChangePassword, Description, Enabled
+    }
+    else {
+        Write-Log "[!!] Account in '$parentDn' and target account OU is missing - cannot move." -Color Red
+        $issues.Add("$AccountName in wrong OU (target OU missing)")
+    }
+
     # Confirm/repair settings on the existing account
     $settings = @(
         @{ Name = 'Enabled';               Want = $true; Have = $user.Enabled;               Fix = { Enable-ADAccount -Identity $AccountName } }
