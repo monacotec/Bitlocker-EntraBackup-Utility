@@ -58,7 +58,7 @@
 param(
     [Parameter()] [string]$AccountName = 'hybridjoin',
     [Parameter()] [string]$UpnSuffix = 'gipartners.com',
-    [Parameter()] [string]$OU = 'OU=Workstations,DC=pe,DC=gipartners,DC=com',
+    [Parameter()] [string]$OU = 'OU=Workstations,OU=GI Partners,DC=pe,DC=gipartners,DC=com',
     [Parameter()] [string]$AccountOU = 'OU=Service Accounts,OU=GI Partners,DC=pe,DC=gipartners,DC=com',
     [Parameter()] [securestring]$AccountPassword,
     [Parameter()] [switch]$ResetPassword,
@@ -184,6 +184,17 @@ try {
 catch {
     Write-Log "[!!] OU not found: $OU" -Color Red
     $issues.Add("OU missing: $OU")
+
+    # Help the operator find the right DN for a rerun
+    Write-Log "Candidate OUs (pass the right one via -OU '<DN>'):" -Color Yellow
+    $candidates = Get-ADOrganizationalUnit -Filter "Name -like '*workstation*' -or Name -like '*computer*' -or Name -like '*laptop*' -or Name -like '*desktop*'" |
+        Select-Object -ExpandProperty DistinguishedName
+    if (-not $candidates) {
+        # Fall back to the OUs under GI Partners
+        $candidates = Get-ADOrganizationalUnit -SearchBase 'OU=GI Partners,DC=pe,DC=gipartners,DC=com' -SearchScope OneLevel -Filter * -ErrorAction SilentlyContinue |
+            Select-Object -ExpandProperty DistinguishedName
+    }
+    foreach ($c in $candidates) { Write-Log "  $c" -Color Yellow }
 }
 
 # --- Step 3: delegation ACEs ---
