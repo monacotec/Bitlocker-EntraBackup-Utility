@@ -16,29 +16,29 @@ deployment tech using it (Part D, per machine).
 
 ### A1. Create the delegated domain-join account
 
-Run on a DC or admin workstation with RSAT, as a domain admin:
+Run `New-HybridJoinAccount.ps1` (this folder) on a DC or admin workstation with
+RSAT, as a domain admin. It creates **`hybridjoin@gipartners.com`** (sAM
+`PE\hybridjoin`) with password-never-expires, and applies the least-privilege
+delegation on the workstation OU (create computer objects; reset password and
+write the join attributes on descendant computer objects only).
 
 ```powershell
-$ou = "OU=Workstations,DC=pe,DC=gipartners,DC=com"   # adjust to your workstation OU
-$pw = Read-Host -AsSecureString "Password for svc-oobe-join"
-New-ADUser -Name "svc-oobe-join" -SamAccountName "svc-oobe-join" `
-    -UserPrincipalName "svc-oobe-join@pe.gipartners.com" `
-    -AccountPassword $pw -Enabled $true -PasswordNeverExpires $true `
-    -Description "OOBE PPKG domain-join only. Delegated on Workstations OU. No interactive logon."
+.\New-HybridJoinAccount.ps1
 ```
 
-Delegate **only** computer-join rights on the OU (elevated cmd):
+The script is idempotent — re-run any time to verify, or audit without touching
+anything:
 
-```bash
-dsacls "OU=Workstations,DC=pe,DC=gipartners,DC=com" /I:T /G "PE\svc-oobe-join:CC;computer"
+```powershell
+.\New-HybridJoinAccount.ps1 -VerifyOnly
 ```
 
-```bash
-dsacls "OU=Workstations,DC=pe,DC=gipartners,DC=com" /I:S /G "PE\svc-oobe-join:CA;Reset Password;computer" "PE\svc-oobe-join:WP;pwdLastSet;computer" "PE\svc-oobe-join:WP;dNSHostName;computer" "PE\svc-oobe-join:WP;servicePrincipalName;computer" "PE\svc-oobe-join:WP;sAMAccountName;computer" "PE\svc-oobe-join:WP;userAccountControl;computer"
-```
+Annual rotation: `.\New-HybridJoinAccount.ps1 -ResetPassword`, then rebuild the
+PPKG (Part B).
 
-Harden it: add to a "Denied interactive logon" GPO (Deny log on locally / through
-Remote Desktop). The account exists solely to create computer objects.
+Harden it: add `PE\hybridjoin` to a "Denied interactive logon" GPO (Deny log on
+locally / through Remote Desktop). The account exists solely to create computer
+objects — the script prints this reminder at the end.
 
 ### A2. Redirect where joined computers land (critical)
 
@@ -85,7 +85,7 @@ Designer** (or the ADK's Imaging and Configuration Designer feature).
    Wi-Fi profiles don't belong on the stick).
 5. **Account management**: **Enroll into Active Directory**
    - Domain: `pe.gipartners.com`
-   - User name: `PE\svc-oobe-join`
+   - User name: `PE\hybridjoin`
    - Password: (the A1 password)
 6. **Add applications**: skip — the PDQ package owns app installs.
 7. **Add certificates**: skip.
@@ -146,7 +146,7 @@ A machine is **not ready to ship** until the last row is green.
 | Event | Action |
 |---|---|
 | Join-account password rotation (do annually) | Reset in AD, rebuild the PPKG (Part B step 5 + 10, bump version), re-copy to all sticks, retire old `.ppkg` files |
-| Stick lost/stolen | Package is encrypted, but rotate `svc-oobe-join`'s password immediately and rebuild anyway |
+| Stick lost/stolen | Package is encrypted, but rotate `hybridjoin`'s password immediately (`New-HybridJoinAccount.ps1 -ResetPassword`) and rebuild anyway |
 | New Windows build misbehaves at OOBE | Re-test the stick on one machine before the next batch; PPKG format is stable but OOBE prompts shift between releases |
 | Machine built without the stick | No harm — it auto-encrypts at 128-bit like before, and the Intune Remediation escrows its key within a day. Optionally decrypt (`Disable-BitLocker -MountPoint C:`) so policy re-encrypts at XTS-256 |
 
@@ -156,6 +156,6 @@ A machine is **not ready to ship** until the last row is green.
 |---|---|---|
 | No trust prompt when stick inserted | Package not at USB root, or inserted after OOBE progressed | Re-seat at the very first screen; power-cycle if needed |
 | "Package couldn't be applied" | Wrong package password, or corrupted copy | Re-enter; re-copy the `.ppkg` |
-| Domain join fails during apply | No line of sight to a DC (not on wired corp network), or `svc-oobe-join` locked/expired | Fix network first; check the account |
+| Domain join fails during apply | No line of sight to a DC (not on wired corp network), or `hybridjoin` locked/expired | Fix network first; run `New-HybridJoinAccount.ps1 -VerifyOnly` |
 | `AzureAdJoined: NO` an hour after join | Computer object outside Connect sync scope (see A2), or sync stalled | Verify OU/scope; check Connect sync health on VMHOST-APP01 |
 | Machine encrypts immediately anyway | Command step missing from package (step 9 skipped) | Verify with the reg query in D2; rebuild package |
