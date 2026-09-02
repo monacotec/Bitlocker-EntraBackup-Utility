@@ -62,31 +62,27 @@ Verify: `gpresult /scope computer /h C:\GI\gpresult.html` on any refreshed
 workstation shows the account in all four deny rights, winning GPO as expected;
 a console sign-in attempt as `PE\hybridjoin` is refused.
 
-### A2. Redirect where joined computers land (critical)
+### A2. Where joined computers land (critical)
 
-The PPKG join cannot target an OU — machines land in the domain's **default
-computers container** (`CN=Computers` unless redirected). Two must-checks:
+Each package pins its landing OU explicitly via the advanced-editor setting
+**Accounts > ComputerAccount > AccountOU** (the wizard doesn't expose it, the
+advanced editor does — see B9):
 
-1. **Entra Connect sync scope includes that container/OU.** If sync skips it,
-   the Entra object is never created and hybrid join silently never completes.
-2. **The Intune auto-enrollment + SCP GPOs apply there.**
+- GI Partners package: `OU=Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com`
+- GI Property package: `OU=Computers,OU=GI Property Management,DC=pe,DC=gipartners,DC=com`
 
-The delegation covers both computer OUs (script defaults):
+The delegation covers both OUs (script defaults), and both must be in Entra
+Connect sync scope and carry the auto-enrollment + SCP GPOs — if sync skips
+the OU, the Entra object is never created and hybrid join silently never
+completes.
 
-- `OU=Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com`
-- `OU=Computers,OU=GI Property Management,DC=pe,DC=gipartners,DC=com`
-
-`redircmp` can only target **one** container, so pick the majority OU as the
-default landing zone:
+As a safety net for any join that omits AccountOU, keep the domain's default
+computers container redirected to the majority OU (verify with
+`(Get-ADDomain).ComputersContainer`):
 
 ```bash
 redircmp "OU=Computers,OU=GI Partners,DC=pe,DC=gipartners,DC=com"
 ```
-
-GI Property Management machines then get moved to their Computers OU right
-after join (the delegation already covers both, so the move needs no extra
-rights work). Both OUs must be in Connect sync scope and carry the
-auto-enrollment + SCP GPOs.
 
 ### A3. Install Windows Configuration Designer
 
@@ -126,6 +122,10 @@ Designer** (or the ADK's Imaging and Configuration Designer feature).
      - **CommandLine**: `cmd /c prevent-device-encryption.cmd`
    - Older builds show **PrimaryContext > Command** instead: same two values,
      plus **ContinueInstall**: True and **RestartRequired**: False
+   Then still in the advanced editor, pin the landing OU:
+   **Runtime settings > Accounts > ComputerAccount > AccountOU** = the DN for
+   this package (see A2). Commit with Enter/Tab and confirm it appears under
+   Selected customizations.
 10. **Export > Provisioning package**:
     - Owner: **IT Admin**
     - Version: bump on every rebuild
@@ -133,6 +133,21 @@ Designer** (or the ADK's Imaging and Configuration Designer feature).
       tech types in the field; it protects the embedded join credential)
     - Do NOT also select a signing cert unless you already manage one
     - Build. Note the output folder.
+
+### B2. Second package — GI Property Management
+
+Same build, three differences:
+
+| Setting | GI Partners package | GI Property package |
+|---|---|---|
+| Project / package name | `GI-OOBE-Provisioning` | `GIPM-OOBE-Provisioning` |
+| Device name | `GI-%SERIAL%` | `GIPM-%SERIAL%` |
+| AccountOU (advanced editor) | `OU=Computers,OU=GI Partners,...` | `OU=Computers,OU=GI Property Management,DC=pe,DC=gipartners,DC=com` |
+
+Everything else is identical: same domain, same `PE\hybridjoin` credential,
+same `prevent-device-encryption.cmd` ProvisioningCommand, encrypted export.
+Use a separate stick labeled `GIPM OOBE v1.0` — a tech grabbing a stick must
+not have to remember which package is on it.
 
 ## Part C — Prepare the USB
 
